@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jan 16 17:43:36 2018
+
+@author: jakeatlas
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans 
+from sklearn.metrics import silhouette_samples, silhouette_score
+
+#Read in the text file, extract the columns of interest
+file = pd.read_csv('/Users/jakeatlas/Downloads/Medicare_Provider_Util_Payment_PUF_CY2015/Medicare_Provider_Util_Payment_PUF_CY2015.txt',sep='\t')
+df_USA = file[['average_Medicare_allowed_amt','nppes_provider_zip','line_srvc_cnt']].copy()
+
+#Initialize a column with the first 2 digits of zipcodes and eliminate records 
+# that aren't associated with Ohio
+df_USA['zipcode_first2_digits'] = df_USA['nppes_provider_zip'].astype(str).str[0:2]
+df_OH = df_USA[(df_USA['zipcode_first2_digits']=='43') | (df_USA['zipcode_first2_digits']=='44') | (df_USA['zipcode_first2_digits']=='45')]
+del df_OH['zipcode_first2_digits']
+df_OH = df_OH.reset_index(drop=True)
+
+#Initialize a column with the first 3 digits of zipcodes and 1-hot encode all
+# zipcodes to be associated with bins corresponding to 5 different geographical
+# regions within Ohio
+df_OH['zipcode_first3_digits'] = df_OH['nppes_provider_zip'].astype(str).str[0:3]
+cleanup_nums = {'zipcode_first3_digits':    {'435':'toledo_northwest',
+                                             '436':'toledo_northwest',
+                                             '434':'toledo_northwest',
+                                             '458':'toledo_northwest',
+                                             '433':'toledo_northwest',
+                                             '448':'toledo_northwest',
+                                             '449':'toledo_northwest',
+                                             '440':'cleveland_akron_northeast',
+                                             '441':'cleveland_akron_northeast',
+                                             '442':'cleveland_akron_northeast',
+                                             '443':'cleveland_akron_northeast',
+                                             '445':'cleveland_akron_northeast',
+                                             '444':'cleveland_akron_northeast',
+                                             '447':'cleveland_akron_northeast',
+                                             '453':'cincinnatti_dayton_southwest',
+                                             '454':'cincinnatti_dayton_southwest',
+                                             '455':'cincinnatti_dayton_southwest',
+                                             '450':'cincinnatti_dayton_southwest',
+                                             '452':'cincinnatti_dayton_southwest',
+                                             '451':'cincinnatti_dayton_southwest',
+                                             '430':'columbus_southcentral',
+                                             '432':'columbus_southcentral',
+                                             '431':'columbus_southcentral',
+                                             '456':'columbus_southcentral',
+                                             '446':'southeast',
+                                             '438':'southeast',
+                                             '439':'southeast',
+                                             '437':'southeast',
+                                             '457':'southeast'}}
+df_OH.replace(cleanup_nums,inplace=True)
+df_OH.rename(columns={'zipcode_first3_digits':'zone'},inplace=True)
+df_OH_cat = pd.get_dummies(df_OH,columns=['zone'])
+del df_OH_cat['nppes_provider_zip']
+
+#Remove outliers
+df_OH_no_outlier_int = df_OH_cat[np.abs(df_OH_cat['average_Medicare_allowed_amt']) - (df_OH_cat['average_Medicare_allowed_amt'].mean()) <= (3*df_OH_cat['average_Medicare_allowed_amt'].std())]
+df_OH_no_outlier_int = df_OH_no_outlier_int.reset_index(drop=True)
+df_OH_no_outlier = df_OH_no_outlier_int[np.abs(df_OH_no_outlier_int['line_srvc_cnt']) - (df_OH_no_outlier_int['line_srvc_cnt'].mean()) <= (3*df_OH_no_outlier_int['line_srvc_cnt'].std())]
+df_OH_no_outlier = df_OH_no_outlier.reset_index(drop=True)
+
+#Check normality, then log, then check normality again
+for element in ['average_Medicare_allowed_amt','line_srvc_cnt']:
+    plt.hist(x=df_OH_no_outlier[element],normed=1)
+    plt.title(element + ' before logging')
+    plt.show()
+    df_OH_no_outlier[element] = np.log10(df_OH_no_outlier[element])
+    plt.hist(x=df_OH_no_outlier[element],normed=1)
+    plt.title(element + ' logged once')
+    plt.show()
+
+#line_srvc_cnt needs to be logged a second time because it's still not normal
+df_OH_no_outlier['line_srvc_cnt'] = np.log10(df_OH_no_outlier['line_srvc_cnt'])
+plt.hist(x=df_OH_no_outlier['line_srvc_cnt'],normed=1)
+plt.title('line_srvc_cnt logged twice')
+plt.show()
+
+#Standardize the data by subtracting the min and dividing by the max
+average_Medicare_allowed_amt_min = np.min(df_OH_no_outlier['average_Medicare_allowed_amt'])
+average_Medicare_allowed_amt_max = np.max(df_OH_no_outlier['average_Medicare_allowed_amt'])
+line_srvc_cnt_min = np.min(df_OH_no_outlier['line_srvc_cnt'])
+line_srvc_cnt_max = np.max(df_OH_no_outlier['line_srvc_cnt'])
+
+df_OH_no_outlier['average_Medicare_allowed_amt'] = (df_OH_no_outlier['average_Medicare_allowed_amt'] - average_Medicare_allowed_amt_min) / average_Medicare_allowed_amt_max
+df_OH_no_outlier['line_srvc_cnt'] = (df_OH_no_outlier['line_srvc_cnt'] - line_srvc_cnt_min) / line_srvc_cnt_max
+
+#Determining number of clusters --> Turns out we should have 5
+cluster_quality = pd.DataFrame(columns = ['inertia', 'number of clusters'])
+for i in range(2,11):
+    kmeans = KMeans(n_clusters = i)
+    kmeans = kmeans.fit(df_OH_no_outlier)
+    cluster_quality.loc[i-2] = [kmeans.inertia_,i]
+
+cluster_quality.plot.scatter(x='number of clusters',y='inertia',title='Relative Performance as a Function of Number of Clusters')
+
+#Recluster with 5 clusters 
+kmeans = KMeans(n_clusters = 5)
+kmeans = kmeans.fit(df_OH_no_outlier)
+labels = kmeans.predict(df_OH_no_outlier)
+centroids = kmeans.cluster_centers_
+
+
+#Compute silhouette scores
+df_with_labels = df_OH_no_outlier.copy()
+df_with_labels['labels'] = labels
+sampled_data = df_with_labels.sample(n=10000)
+silhouette_avg = silhouette_score(sampled_data.drop('labels',axis=1),sampled_data['labels'])
+print('The average silhouette score is ' + str(silhouette_avg))
+
+#Add cluster column to df_OH_no_outlier
+df_OH_no_outlier['cluster'] = labels
+
+#Examining the data, it is clear that clustering is determined solely by location. Get the location for each cluster.
+for row in range(0,np.shape(df_OH_no_outlier)[0]):
+    if df_OH_no_outlier['cluster'][row]==0:
+        if df_OH_no_outlier['zone_cincinnatti_dayton_southwest'][row]==1:
+            cluster0 = 'zone_cincinnatti_dayton_southwest'
+        elif df_OH_no_outlier['zone_cleveland_akron_northeast'][row]==1:
+            cluster0 = 'zone_cleveland_akron_northeast'
+        elif df_OH_no_outlier['zone_columbus_southcentral'][row]==1:
+            cluster0 = 'zone_columbus_southcentral'
+        elif df_OH_no_outlier['zone_southeast'][row]==1:
+            cluster0 = 'zone_southeast'
+        else:
+            cluster0 = 'zone_toledo_northwest'
+    elif df_OH_no_outlier['cluster'][row]==1:
+        if df_OH_no_outlier['zone_cincinnatti_dayton_southwest'][row]==1:
+            cluster1 = 'zone_cincinnatti_dayton_southwest'
+        elif df_OH_no_outlier['zone_cleveland_akron_northeast'][row]==1:
+            cluster1 = 'zone_cleveland_akron_northeast'
+        elif df_OH_no_outlier['zone_columbus_southcentral'][row]==1:
+            cluster1 = 'zone_columbus_southcentral'
+        elif df_OH_no_outlier['zone_southeast'][row]==1:
+            cluster1 = 'zone_southeast'
+        else:
+            cluster1 = 'zone_toledo_northwest'
+    elif df_OH_no_outlier['cluster'][row]==2:
+        if df_OH_no_outlier['zone_cincinnatti_dayton_southwest'][row]==1:
+            cluster2 = 'zone_cincinnatti_dayton_southwest'
+        elif df_OH_no_outlier['zone_cleveland_akron_northeast'][row]==1:
+            cluster2 = 'zone_cleveland_akron_northeast'
+        elif df_OH_no_outlier['zone_columbus_southcentral'][row]==1:
+            cluster2 = 'zone_columbus_southcentral'
+        elif df_OH_no_outlier['zone_southeast'][row]==1:
+            cluster2 = 'zone_southeast'
+        else:
+            cluster2 = 'zone_toledo_northwest'
+    elif df_OH_no_outlier['cluster'][row]==3:
+        if df_OH_no_outlier['zone_cincinnatti_dayton_southwest'][row]==1:
+            cluster3 = 'zone_cincinnatti_dayton_southwest'
+        elif df_OH_no_outlier['zone_cleveland_akron_northeast'][row]==1:
+            cluster3 = 'zone_cleveland_akron_northeast'
+        elif df_OH_no_outlier['zone_columbus_southcentral'][row]==1:
+            cluster3 = 'zone_columbus_southcentral'
+        elif df_OH_no_outlier['zone_southeast'][row]==1:
+            cluster3 = 'zone_southeast'
+        else:
+            cluster3 = 'zone_toledo_northwest'
+    elif df_OH_no_outlier['cluster'][row]==4:
+        if df_OH_no_outlier['zone_cincinnatti_dayton_southwest'][row]==1:
+            cluster4 = 'zone_cincinnatti_dayton_southwest'
+        elif df_OH_no_outlier['zone_cleveland_akron_northeast'][row]==1:
+            cluster4 = 'zone_cleveland_akron_northeast'
+        elif df_OH_no_outlier['zone_columbus_southcentral'][row]==1:
+            cluster4 = 'zone_columbus_southcentral'
+        elif df_OH_no_outlier['zone_southeast'][row]==1:
+            cluster4 = 'zone_southeast'
+        else:
+            cluster4 = 'zone_toledo_northwest'        
+        
+print('The clusters are associated with the following regions:' + '\n'
+      + 'Cluster 1: ' + cluster0 + '\n'
+      + 'Cluster 2: ' + cluster1 + '\n'
+      + 'Cluster 3: ' + cluster2 + '\n'
+      + 'Cluster 4: ' + cluster3 + '\n'
+      + 'Cluster 5: ' + cluster4)
+        
+#Checking the total amount of money in each cluster to ensure they're similar
+df_money = df_OH_no_outlier[['cluster','average_Medicare_allowed_amt','line_srvc_cnt']].copy()
+df_money['money'] = df_money['average_Medicare_allowed_amt'] * df_money['line_srvc_cnt'] 
+
+total_money_cluster0 = df_money.loc[df_money['cluster']==0, 'money'].sum()
+total_money_cluster1 = df_money.loc[df_money['cluster']==1, 'money'].sum()
+total_money_cluster2 = df_money.loc[df_money['cluster']==2, 'money'].sum()
+total_money_cluster3 = df_money.loc[df_money['cluster']==3, 'money'].sum()
+total_money_cluster4 = df_money.loc[df_money['cluster']==4, 'money'].sum()
+
+#They're quite similar - location does not really affect profitability
+standardized_money_cluster0 = total_money_cluster0 / df_OH_no_outlier[cluster0].sum()
+standardized_money_cluster1 = total_money_cluster1 / df_OH_no_outlier[cluster1].sum()
+standardized_money_cluster2 = total_money_cluster2 / df_OH_no_outlier[cluster2].sum()
+standardized_money_cluster3 = total_money_cluster3 / df_OH_no_outlier[cluster3].sum()
+standardized_money_cluster4 = total_money_cluster4 / df_OH_no_outlier[cluster4].sum()
+
+print('The standardized amount of money per cluster is: ' +
+      '\n' + 'Cluster 1: ' + str(standardized_money_cluster0) +
+      '\n' + 'Cluster 2: ' + str(standardized_money_cluster1) +
+      '\n' + 'Cluster 3: ' + str(standardized_money_cluster2) +
+      '\n' + 'Cluster 4: ' + str(standardized_money_cluster3) +
+      '\n' + 'Cluster 5: ' + str(standardized_money_cluster4))
+      
