@@ -1,0 +1,27 @@
+runfile('/Users/jakeatlas/Desktop/IEMS308_Clustering', wdir='/Users/jakeatlas/Desktop')
+/Users/jakeatlas/Desktop/IEMS308_Clustering:1: DtypeWarning: Columns (10) have mixed types. Specify dtype option on import or set low_memory=False.
+  #!/usr/bin/env python3
+
+
+
+
+
+
+
+
+
+
+The average silhouette score is 0.772971653591
+The clusters are associated with the following regions:
+Cluster 1: zone_cleveland_akron_northeast
+Cluster 2: zone_columbus_southcentral
+Cluster 3: zone_toledo_northwest
+Cluster 4: zone_cincinnatti_dayton_southwest
+Cluster 5: zone_southeast
+The standardized amount of money per cluster is: 
+Cluster 1: 0.441032556462
+Cluster 2: 0.425462764885
+Cluster 3: 0.450618872944
+Cluster 4: 0.445547857851
+Cluster 5: 0.45595427763
+
